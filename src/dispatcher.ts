@@ -12,6 +12,7 @@ export interface DispatchResult {
   success: boolean;
   status?: number;
   data?: unknown;
+  text?: string;
   error?: string;
   headers?: Record<string, string>;
 }
@@ -68,6 +69,15 @@ function resolvePath(pathTemplate: string, id?: string): string {
   return pathTemplate.replace(":id", encodeURIComponent(id));
 }
 
+/**
+ * Format any data as CLI-friendly text output.
+ */
+function formatAsText(data: unknown): string {
+  if (data === undefined || data === null) return "";
+  if (typeof data === "string") return data;
+  return JSON.stringify(data, null, 2);
+}
+
 export async function dispatch(
   command: ParsedCommand,
   token: string
@@ -85,40 +95,26 @@ export async function dispatch(
     if (normalizedResource !== "help" && normalizedResource !== "" && command.action === "help") {
       const resourceCommands = grouped[normalizedResource];
       if (resourceCommands) {
-        return {
-          success: true,
-          data: {
-            text: renderResourceHelpText(normalizedResource, resourceCommands),
-            resource: normalizedResource,
-            actions: resourceCommands,
-          },
-        };
+        const text = renderResourceHelpText(normalizedResource, resourceCommands);
+        return { success: true, text, data: { text } };
       }
-      return {
-        success: false,
-        error: `Unknown resource: "${normalizedResource}". Run "fintoc help" for all available commands.`,
-        data: { available_resources: Object.keys(grouped) },
-      };
+      const errMsg = `Unknown resource: "${normalizedResource}". Run "fintoc help" for all available commands.`;
+      return { success: false, error: errMsg, text: errMsg };
     }
 
-    return {
-      success: true,
-      data: {
-        text: renderHelpText(),
-        resources: Object.keys(grouped),
-      },
-    };
+    const text = renderHelpText();
+    return { success: true, text, data: { text } };
   }
 
   const key = routeKey(command.resource, command.action);
   const route = routes[key];
 
   if (!route) {
-    const commands = getAvailableCommands();
+    const errMsg = `Unknown command: "${command.resource} ${command.action}". Run "fintoc help" for available commands.`;
     return {
       success: false,
-      error: `Unknown command: "${command.resource} ${command.action}". Run "fintoc help" for available commands.`,
-      data: { available_commands: commands },
+      error: errMsg,
+      text: errMsg,
     };
   }
 
@@ -142,10 +138,12 @@ export async function dispatch(
       responseType: route.responseType,
     });
 
+    const success = result.status >= 200 && result.status < 300;
     return {
-      success: result.status >= 200 && result.status < 300,
+      success,
       status: result.status,
       data: result.data,
+      text: formatAsText(result.data),
       headers: result.headers,
     };
   } catch (error) {
@@ -154,6 +152,7 @@ export async function dispatch(
     return {
       success: false,
       error: message,
+      text: `Error: ${message}`,
     };
   }
 }

@@ -1,6 +1,14 @@
 import { streamAgent } from "./openai";
 import { parseCommand } from "./src/parser.ts";
 import { dispatch } from "./src/dispatcher.ts";
+import { getAuth0Token } from "./src/cli/auth0.ts";
+import {
+  ensureUser,
+  createSession,
+  validateSession,
+  activateSession,
+  getRawToken,
+} from "./src/cli/session.ts";
 
 const PORT = Number(process.env.PORT) || 4000;
 
@@ -63,7 +71,105 @@ Bun.serve({
         const result = await dispatch(parsed, token);
 
         const status = result.status || (result.success ? 200 : 400);
-        return withCors(Response.json(result, { status }));
+        return withCors(Response.json({ output: result.text }, { status }));
+      },
+    },
+    "/login": {
+      OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
+      POST: async (req) => {
+        let body: { email?: string; password?: string; mfa_code?: string };
+        try {
+          body = (await req.json()) as typeof body;
+        } catch {
+          return withCors(
+            Response.json(
+              { error: 'Invalid JSON body. Expected: { "email": "...", "password": "..." }' },
+              { status: 400 }
+            )
+          );
+        }
+
+        const { email, password, mfa_code } = body;
+        if (!email || !password) {
+          return withCors(
+            Response.json(
+              { error: 'Missing "email" or "password" field' },
+              { status: 400 }
+            )
+          );
+        }
+
+        // Step 1: Auth0 token
+        let jwt: string;
+        try {
+          jwt = await getAuth0Token(email, password);
+        } catch (err) {
+          return withCors(
+            Response.json(
+              { error: err instanceof Error ? err.message : "Auth0 authentication failed" },
+              { status: 401 }
+            )
+          );
+        }
+
+        // Step 2: Ensure user exists
+        try {
+          await ensureUser(jwt);
+        } catch {
+          // Non-fatal — user may already exist
+        }
+
+        // Step 3: Create session
+        let signedToken: string;
+        try {
+          signedToken = await createSession(jwt);
+        } catch (err) {
+          return withCors(
+            Response.json(
+              { error: err instanceof Error ? err.message : "Session creation failed" },
+              { status: 500 }
+            )
+          );
+        }
+
+        // Step 4: Check MFA
+        const validation = await validateSession(signedToken);
+        if (!validation.active && validation.mfaStatus) {
+          if (!mfa_code) {
+            return withCors(
+              Response.json(
+                { mfa_required: true, mfa_status: validation.mfaStatus },
+                { status: 403 }
+              )
+            );
+          }
+
+          try {
+            await activateSession(signedToken, mfa_code);
+          } catch (err) {
+            return withCors(
+              Response.json(
+                { error: err instanceof Error ? err.message : "MFA activation failed" },
+                { status: 401 }
+              )
+            );
+          }
+        }
+
+        // Step 5: Get raw token for Bearer auth
+        const rawToken = await getRawToken(signedToken);
+        if (!rawToken) {
+          return withCors(
+            Response.json(
+              { error: "Session created but could not retrieve token" },
+              { status: 500 }
+            )
+          );
+        }
+
+        return withCors(
+          Response.json({ token: rawToken, email })
+        );
       },
     },
     "/chat": {

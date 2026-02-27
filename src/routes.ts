@@ -830,13 +830,30 @@ export function renderHelpText(): string {
   const grouped = getGroupedCommands();
   const resources = Object.keys(grouped);
 
+  // Wrap resources into lines of ~60 chars, indented by 4 spaces
+  const resourceLines: string[] = [];
+  let currentLine = "    ";
+  for (let i = 0; i < resources.length; i++) {
+    const sep = i === 0 ? "" : ", ";
+    const candidate = currentLine + sep + resources[i];
+    if (candidate.length > 64 && currentLine.trim().length > 0) {
+      resourceLines.push(currentLine + ",");
+      currentLine = "    " + resources[i];
+    } else {
+      currentLine = candidate;
+    }
+  }
+  if (currentLine.trim().length > 0) {
+    resourceLines.push(currentLine);
+  }
+
   return [
     "Fintoc CLI",
     "",
     "  Usage:  fintoc <resource> <action> [<id>] [--flag value ...]",
     "",
     "  Resources:",
-    `    ${resources.join(", ")}`,
+    ...resourceLines,
     "",
     "  Examples:",
     "    fintoc transfers list --mode live --limit 10",

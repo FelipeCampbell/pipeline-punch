@@ -111,11 +111,8 @@ const parsed = parseCommand(commandStr);
 const result = await dispatch(parsed, token);
 
 if (result.success) {
-  console.log(JSON.stringify(result.data, null, 2));
+  console.log(result.text);
 } else {
-  console.error(`Error: ${result.error}`);
-  if (result.data) {
-    console.error(JSON.stringify(result.data, null, 2));
-  }
+  console.error(result.text || result.error);
   process.exit(1);
 }
