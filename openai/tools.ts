@@ -216,6 +216,12 @@ const ListInstitutionsParameters = z.object({
   country: z.enum(["CL", "MX"]).optional().describe("Filter institutions by country code: 'CL' for Chile, 'MX' for Mexico. Omit to return institutions from all countries."),
 });
 
+// ── Recipients ──
+
+const ListRecipientsParameters = z.object({
+  search: z.string().optional().describe("Search recipients by name (holder_name). Use this when the user mentions a recipient by name to find matches."),
+});
+
 // ── Navigation ──
 
 const NavigateToPageParameters = z.object({
@@ -662,6 +668,18 @@ export function buildTools(threadId: string, token: string, context: BuildToolsC
         const flags: Record<string, unknown> = {};
         if (args.country) flags.country = args.country;
         return runCommand(token, "banks", "list", flags, undefined, context);
+      },
+    }),
+
+    // ── Recipients ──
+    createTool({
+      name: "list_recipients",
+      description: "List saved transfer recipients (destinatarios guardados) for the organization. Returns each recipient's ID, holder name, account number, institution name, account type, and country. Use the search parameter to filter by name. Use this when the user wants to transfer to a third party — offer saved recipients before asking for manual input. The environment mode (live/test) is automatically set from the user's session.",
+      schema: ListRecipientsParameters,
+      handler: async (args) => {
+        const flags: Record<string, unknown> = {};
+        if (args.search) flags.search = args.search;
+        return runCommand(token, "recipients", "list", flags, undefined, context);
       },
     }),
 
