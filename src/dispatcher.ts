@@ -96,14 +96,14 @@ export async function dispatch(
       const resourceCommands = grouped[normalizedResource];
       if (resourceCommands) {
         const text = renderResourceHelpText(normalizedResource, resourceCommands);
-        return { success: true, text, data: { text } };
+        return { success: true, text, data: text };
       }
       const errMsg = `Unknown resource: "${normalizedResource}". Run "fintoc help" for all available commands.`;
       return { success: false, error: errMsg, text: errMsg };
     }
 
     const text = renderHelpText();
-    return { success: true, text, data: { text } };
+    return { success: true, text, data: text };
   }
 
   const key = routeKey(command.resource, command.action);
@@ -119,6 +119,15 @@ export async function dispatch(
   }
 
   try {
+    // Apply defaults for common flags when not explicitly provided
+    const description = route.description ?? "";
+    if (!command.flags.mode && description.includes("--mode")) {
+      command.flags.mode = "test";
+    }
+    if (!command.flags.limit && description.includes("--limit")) {
+      command.flags.limit = 10;
+    }
+
     const path = resolvePath(route.path, command.id);
     const { query, body } = splitFlags(command.flags, route);
 
