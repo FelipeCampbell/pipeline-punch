@@ -105,8 +105,7 @@ export async function dispatch(
       success: true,
       data: {
         text: renderHelpText(),
-        usage: "fintoc <resource> <action> [<id>] [--flag value ...]",
-        resources: grouped,
+        resources: Object.keys(grouped),
       },
     };
   }

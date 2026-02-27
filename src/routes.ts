@@ -823,42 +823,30 @@ export function getGroupedCommands(): Record<string, GroupedAction[]> {
 }
 
 /**
- * Render a CLI-style help text for all commands, grouped by resource.
- * Designed to be copy-paste friendly — reads like real CLI output.
+ * Render a concise CLI-style help text.
+ * Reads like a real `--help` — usage, resources list, examples.
  */
 export function renderHelpText(): string {
   const grouped = getGroupedCommands();
-  const lines: string[] = [];
+  const resources = Object.keys(grouped);
 
-  // Find the longest action name for alignment
-  let maxActionLen = 0;
-  for (const actions of Object.values(grouped)) {
-    for (const a of actions) {
-      if (a.action.length > maxActionLen) maxActionLen = a.action.length;
-    }
-  }
-  const colWidth = maxActionLen + 6; // 4 indent + 2 gutter
-
-  lines.push("Fintoc CLI");
-  lines.push("");
-  lines.push("  Usage:  fintoc <resource> <action> [<id>] [--flag value ...]");
-  lines.push("");
-  lines.push("  Resources:");
-  lines.push("");
-
-  for (const [resource, actions] of Object.entries(grouped)) {
-    lines.push(`  ${resource}`);
-    for (const a of actions) {
-      const padded = `    ${a.action}`.padEnd(colWidth);
-      lines.push(`${padded}${a.description}`);
-    }
-    lines.push("");
-  }
-
-  lines.push("  Tip: run \"fintoc <resource> help\" for details on a specific resource.");
-  lines.push("");
-
-  return lines.join("\n");
+  return [
+    "Fintoc CLI",
+    "",
+    "  Usage:  fintoc <resource> <action> [<id>] [--flag value ...]",
+    "",
+    "  Resources:",
+    `    ${resources.join(", ")}`,
+    "",
+    "  Examples:",
+    "    fintoc transfers list --mode live --limit 10",
+    "    fintoc transfers show tra_123 --mode live",
+    "    fintoc recipients create --holder_name \"John\" --account_number 123456",
+    "    fintoc webhook-endpoints list --mode test",
+    "",
+    "  Run \"fintoc <resource> help\" to see all actions for a resource.",
+    "",
+  ].join("\n");
 }
 
 /**
