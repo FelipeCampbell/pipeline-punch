@@ -1,5 +1,7 @@
+import { runAgent } from "./openai";
+
 Bun.serve({
-  port: 3000,
+  port: 8080,
   routes: {
     "/cli": {
       POST: async (req) => {
@@ -9,8 +11,20 @@ Bun.serve({
     },
     "/chat": {
       POST: async (req) => {
-        const body = await req.json();
-        return Response.json({ endpoint: "chat", data: body });
+        const { message, threadId } = await req.json();
+
+        if (!message || typeof message !== "string") {
+          return Response.json(
+            { error: "Missing 'message' field in request body" },
+            { status: 400 }
+          );
+        }
+
+        const result = await runAgent(message, { threadId });
+        return Response.json({
+          reply: result.reply,
+          threadId: result.threadId,
+        });
       },
     },
   },
@@ -19,4 +33,4 @@ Bun.serve({
   },
 });
 
-console.log("Server running on http://localhost:3000");
+console.log("Server running on http://localhost:8080");
