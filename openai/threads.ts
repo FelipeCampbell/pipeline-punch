@@ -1,13 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
 export interface PendingAction {
-  type:
-    | "create_transfer"
-    | "delete_webhook"
-    | "create_refund"
-    | "delete_banking_link"
-    | "invite_team_member"
-    | "disable_team_member";
+  type: "create_transfer";
   data: Record<string, unknown>;
 }
 

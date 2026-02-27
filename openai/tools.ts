@@ -1,7 +1,8 @@
 import { z } from "zod/v4";
 import type { RunnableToolFunctionWithParse } from "openai/lib/RunnableFunction";
 import { setPendingAction, getPendingAction } from "./threads";
-import { apiRequest } from "../src/client";
+import { dispatch } from "../src/dispatcher";
+import type { ParsedCommand } from "../src/parser";
 
 // ── Tool factory ──
 
@@ -25,21 +26,17 @@ export function createTool<T extends z.ZodType>(opts: {
   };
 }
 
-// ── Helper to call the Rails API and return stringified result ──
+// ── Helper to dispatch a CLI command and return stringified result ──
 
-async function callApi(
+async function runCommand(
   token: string,
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
-  path: string,
-  options?: { query?: Record<string, unknown>; body?: Record<string, unknown> }
+  resource: string,
+  action: string,
+  flags: Record<string, unknown> = {},
+  id?: string
 ): Promise<string> {
-  const result = await apiRequest({
-    method,
-    path,
-    token,
-    query: options?.query,
-    body: options?.body,
-  });
+  const command: ParsedCommand = { resource, action, flags, id };
+  const result = await dispatch(command, token);
   return JSON.stringify(result.data);
 }
 
@@ -210,26 +207,25 @@ export function buildTools(threadId: string, token: string): Tool[] {
   // ── MFA-aware handlers ──
 
   async function createTransferIntent(args: z.infer<typeof CreateTransferIntentParameters>): Promise<string> {
-    const { mode, ...bodyArgs } = args;
-    // Build counterparty nested object as the API expects
-    const body: Record<string, unknown> = {
-      account_id: bodyArgs.account_id,
-      amount: bodyArgs.amount,
-      currency: bodyArgs.currency,
+    // Store pending action data for MFA approval flow
+    const pendingData: Record<string, unknown> = {
+      account_id: args.account_id,
+      amount_cents: args.amount,
+      amount_currency: args.currency,
       counterparty: {
-        holder_name: bodyArgs.counterparty_holder_name,
-        holder_id: bodyArgs.counterparty_holder_id,
-        institution_id: bodyArgs.counterparty_institution_id,
-        account_type: bodyArgs.counterparty_account_type,
-        account_number: bodyArgs.counterparty_account_number,
+        holder_name: args.counterparty_holder_name,
+        holder_id: args.counterparty_holder_id,
+        institution_id: args.counterparty_institution_id,
+        type: args.counterparty_account_type,
+        account_number: args.counterparty_account_number,
       },
+      comment: args.comment,
+      mode: args.mode ?? "live",
     };
-    if (bodyArgs.comment) body.comment = bodyArgs.comment;
 
-    // Store pending action for MFA approval flow
     setPendingAction(threadId, {
       type: "create_transfer",
-      data: { ...body, mode: mode ?? "live" },
+      data: pendingData,
     });
     return JSON.stringify({
       status: "mfa_required",
@@ -240,12 +236,9 @@ export function buildTools(threadId: string, token: string): Tool[] {
   async function requestMfa(args: z.infer<typeof RequestMfaParameters>): Promise<string> {
     const pending = getPendingAction(threadId);
     if (!pending) return JSON.stringify({ error: "No hay ninguna acción pendiente que requiera MFA." });
-    // Call real OTP endpoint
-    const result = await callApi(token, "POST", "/internal/v1/dashboard/mfa/otp");
     return JSON.stringify({
-      status: "otp_sent",
-      message: "Se ha enviado un código OTP al dispositivo del usuario. Pídele al usuario que ingrese el código de 6 dígitos para confirmar la acción.",
-      api_result: JSON.parse(result),
+      status: "otp_ready",
+      message: "Pídele al usuario que ingrese su código MFA de 6 dígitos desde su aplicación de autenticación para confirmar la acción.",
     });
   }
 
@@ -255,72 +248,13 @@ export function buildTools(threadId: string, token: string): Tool[] {
     if (!/^\d{6}$/.test(args.otp_code)) {
       return JSON.stringify({ error: "El código OTP debe ser exactamente 6 dígitos numéricos." });
     }
-    // Validate OTP
-    const validateResult = await callApi(token, "POST", "/internal/v1/dashboard/mfa/otp/validate", {
-      body: { code: args.otp_code },
-    });
-    // Execute the pending action
+    // Execute the pending action via the CLI dispatcher
     const result = await executePendingAction(pending.type, pending.data, args.otp_code, token);
     setPendingAction(threadId, null);
     return result;
   }
 
-  async function deleteWebhook(args: z.infer<typeof DeleteWebhookParameters>): Promise<string> {
-    setPendingAction(threadId, {
-      type: "delete_webhook",
-      data: { webhook_id: args.webhook_id, mode: args.mode ?? "live" },
-    });
-    return JSON.stringify({
-      status: "mfa_required",
-      message: `Para eliminar el webhook ${args.webhook_id}, se requiere verificación MFA. Usa la herramienta request_mfa para iniciar la verificación.`,
-    });
-  }
-
-  async function createRefundMfa(args: z.infer<typeof CreateRefundParameters>): Promise<string> {
-    setPendingAction(threadId, {
-      type: "create_refund",
-      data: args as unknown as Record<string, unknown>,
-    });
-    return JSON.stringify({
-      status: "mfa_required",
-      message: `Para crear el reembolso del recurso ${args.resource_id}, se requiere verificación MFA. Usa la herramienta request_mfa para iniciar la verificación.`,
-    });
-  }
-
-  async function deleteBankingLinkMfa(args: z.infer<typeof DeleteBankingLinkParameters>): Promise<string> {
-    setPendingAction(threadId, {
-      type: "delete_banking_link",
-      data: { link_id: args.link_id, mode: args.mode ?? "live" },
-    });
-    return JSON.stringify({
-      status: "mfa_required",
-      message: `Para eliminar el link bancario ${args.link_id}, se requiere verificación MFA. Usa la herramienta request_mfa para iniciar la verificación.`,
-    });
-  }
-
-  async function inviteTeamMemberMfa(args: z.infer<typeof InviteTeamMemberParameters>): Promise<string> {
-    setPendingAction(threadId, {
-      type: "invite_team_member",
-      data: args as unknown as Record<string, unknown>,
-    });
-    return JSON.stringify({
-      status: "mfa_required",
-      message: `Para invitar a ${args.name} ${args.last_name} (${args.email}) como ${args.organization_role}, se requiere verificación MFA. Usa la herramienta request_mfa para iniciar la verificación.`,
-    });
-  }
-
-  async function disableTeamMemberMfa(args: z.infer<typeof DisableTeamMemberParameters>): Promise<string> {
-    setPendingAction(threadId, {
-      type: "disable_team_member",
-      data: { member_id: args.member_id },
-    });
-    return JSON.stringify({
-      status: "mfa_required",
-      message: `Para deshabilitar al miembro ${args.member_id}, se requiere verificación MFA. Usa la herramienta request_mfa para iniciar la verificación.`,
-    });
-  }
-
-  // ── Execute pending MFA actions via real API ──
+  // ── Execute pending MFA actions via CLI dispatcher ──
 
   async function executePendingAction(
     type: string,
@@ -329,58 +263,11 @@ export function buildTools(threadId: string, token: string): Tool[] {
     apiToken: string
   ): Promise<string> {
     if (type === "create_transfer") {
-      // Create the transfer intent
-      const mode = (data.mode as string) ?? "live";
-      const { mode: _, ...body } = data;
-      const createResult = await callApi(apiToken, "POST", "/internal/v2/dashboard/transfer_intents", {
-        body,
-      });
-      const created = JSON.parse(createResult);
-      const intentId = created?.id ?? created?.data?.id;
-      if (intentId) {
-        // Approve via batch review with OTP
-        return callApi(apiToken, "POST", "/internal/v2/dashboard/transfer_intents/batch_review", {
-          body: {
-            mode,
-            transfer_intent_ids: [intentId],
-            decision: "approve",
-            otp_code: otpCode,
-          },
-        });
-      }
-      return createResult;
-    }
-
-    if (type === "delete_webhook") {
-      const mode = (data.mode as string) ?? "live";
-      return callApi(apiToken, "DELETE", `/internal/v1/dashboard/webhook_endpoints/${encodeURIComponent(data.webhook_id as string)}`, {
-        query: { mode },
-      });
-    }
-
-    if (type === "create_refund") {
-      const { mode, ...body } = data;
-      return callApi(apiToken, "POST", "/internal/v1/dashboard/refunds", {
-        query: mode ? { mode } : undefined,
-        body,
-      });
-    }
-
-    if (type === "delete_banking_link") {
-      const mode = (data.mode as string) ?? "live";
-      return callApi(apiToken, "DELETE", `/internal/v1/dashboard/links/${encodeURIComponent(data.link_id as string)}`, {
-        body: { mode },
-      });
-    }
-
-    if (type === "invite_team_member") {
-      return callApi(apiToken, "POST", "/internal/v1/dashboard/organization_users", {
-        body: data,
-      });
-    }
-
-    if (type === "disable_team_member") {
-      return callApi(apiToken, "DELETE", `/internal/v1/dashboard/organization_users/${encodeURIComponent(data.member_id as string)}`);
+      const flags: Record<string, unknown> = {
+        ...data,
+        otp_code: otpCode,
+      };
+      return runCommand(apiToken, "transfer-intents", "create", flags);
     }
 
     return JSON.stringify({ error: "Unknown action type" });
@@ -397,12 +284,12 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "Get bank transfers. Can filter by status, mode, and paginate.",
       schema: GetTransfersParameters,
       handler: async (args) => {
-        const query: Record<string, unknown> = {};
-        if (args.mode) query.mode = args.mode;
-        if (args.limit) query.limit = args.limit;
-        if (args.starting_after) query.starting_after = args.starting_after;
-        if (args.status) query.status = args.status;
-        return callApi(token, "GET", "/internal/v2/dashboard/transfers", { query });
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        if (args.limit) flags.limit = args.limit;
+        if (args.starting_after) flags.starting_after = args.starting_after;
+        if (args.status) flags.status = args.status;
+        return runCommand(token, "transfers", "list", flags);
       },
     }),
     createTool({
@@ -410,9 +297,9 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "Get a specific transfer by its ID.",
       schema: GetTransferByIdParameters,
       handler: async (args) => {
-        const query: Record<string, unknown> = {};
-        if (args.mode) query.mode = args.mode;
-        return callApi(token, "GET", `/internal/v2/dashboard/transfers/${encodeURIComponent(args.transfer_id)}`, { query });
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        return runCommand(token, "transfers", "show", flags, args.transfer_id);
       },
     }),
     createTool({
@@ -425,7 +312,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
     // ── MFA ──
     createTool({
       name: "request_mfa",
-      description: "Initiates MFA verification for a pending action. Sends an OTP code to the user's registered device. Call this after a tool returns mfa_required status.",
+      description: "Initiates MFA verification for a pending action. Call this after a tool returns mfa_required status. It will prompt the user to enter their 6-digit TOTP code from their authenticator app.",
       schema: RequestMfaParameters,
       handler: requestMfa,
     }),
@@ -442,9 +329,9 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "List all configured webhook endpoints with their URLs, events, and status.",
       schema: ListWebhooksParameters,
       handler: async (args) => {
-        const query: Record<string, unknown> = {};
-        if (args.mode) query.mode = args.mode;
-        return callApi(token, "GET", "/internal/v1/dashboard/webhook_endpoints", { query });
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        return runCommand(token, "webhook-endpoints", "list", flags);
       },
     }),
     createTool({
@@ -452,11 +339,12 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "Create a new webhook endpoint. Specify the URL and list of events to subscribe to.",
       schema: CreateWebhookParameters,
       handler: async (args) => {
-        const { mode, ...body } = args;
-        return callApi(token, "POST", "/internal/v1/dashboard/webhook_endpoints", {
-          query: mode ? { mode } : undefined,
-          body,
-        });
+        const flags: Record<string, unknown> = {};
+        if (args.name) flags.name = args.name;
+        flags.url = args.url;
+        flags.enabled_events = args.enabled_events;
+        if (args.mode) flags.mode = args.mode;
+        return runCommand(token, "webhook-endpoints", "create", flags);
       },
     }),
     createTool({
@@ -464,18 +352,24 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "Update an existing webhook endpoint. Can change URL, events, status (enable/disable).",
       schema: UpdateWebhookParameters,
       handler: async (args) => {
-        const { webhook_id, mode, ...body } = args;
-        return callApi(token, "PUT", `/internal/v1/dashboard/webhook_endpoints/${encodeURIComponent(webhook_id)}`, {
-          query: mode ? { mode } : undefined,
-          body,
-        });
+        const flags: Record<string, unknown> = {};
+        if (args.name) flags.name = args.name;
+        if (args.url) flags.url = args.url;
+        if (args.enabled_events) flags.enabled_events = args.enabled_events;
+        if (args.disabled !== undefined) flags.disabled = args.disabled;
+        if (args.mode) flags.mode = args.mode;
+        return runCommand(token, "webhook-endpoints", "update", flags, args.webhook_id);
       },
     }),
     createTool({
       name: "delete_webhook",
-      description: "Delete a webhook endpoint by ID. Requires MFA verification.",
+      description: "Delete a webhook endpoint by ID.",
       schema: DeleteWebhookParameters,
-      handler: deleteWebhook,
+      handler: async (args) => {
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        return runCommand(token, "webhook-endpoints", "delete", flags, args.webhook_id);
+      },
     }),
 
     // ── Payments ──
@@ -484,10 +378,10 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "List payment intents. Can filter by mode.",
       schema: ListPaymentIntentsParameters,
       handler: async (args) => {
-        const query: Record<string, unknown> = {};
-        if (args.mode) query.mode = args.mode;
-        if (args.limit) query.limit = args.limit;
-        return callApi(token, "GET", "/internal/v1/dashboard/payment_intents", { query });
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        if (args.limit) flags.limit = args.limit;
+        return runCommand(token, "payments", "list", flags);
       },
     }),
     createTool({
@@ -495,18 +389,26 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "Get a specific payment intent by ID.",
       schema: GetPaymentIntentParameters,
       handler: async (args) => {
-        const query: Record<string, unknown> = {};
-        if (args.mode) query.mode = args.mode;
-        return callApi(token, "GET", `/internal/v1/dashboard/payment_intents/${encodeURIComponent(args.payment_intent_id)}`, { query });
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        return runCommand(token, "payments", "show", flags, args.payment_intent_id);
       },
     }),
 
     // ── Refunds ──
     createTool({
       name: "create_refund",
-      description: "Create a refund for a payment. Requires MFA verification.",
+      description: "Create a refund for a payment.",
       schema: CreateRefundParameters,
-      handler: createRefundMfa,
+      handler: async (args) => {
+        const flags: Record<string, unknown> = {
+          resource_type: args.resource_type,
+          resource_id: args.resource_id,
+        };
+        if (args.amount) flags.amount = args.amount;
+        if (args.mode) flags.mode = args.mode;
+        return runCommand(token, "refunds", "create", flags);
+      },
     }),
 
     // ── Subscriptions ──
@@ -514,7 +416,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       name: "list_subscriptions",
       description: "List subscriptions (direct debit / recurring payments).",
       schema: ListSubscriptionsParameters,
-      handler: async () => callApi(token, "GET", "/internal/v1/dashboard/subscriptions"),
+      handler: async () => runCommand(token, "subscriptions", "list"),
     }),
 
     // ── Charges ──
@@ -522,7 +424,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       name: "list_charges",
       description: "List charges (individual payments within subscriptions).",
       schema: ListChargesParameters,
-      handler: async () => callApi(token, "GET", "/internal/v1/dashboard/charges"),
+      handler: async () => runCommand(token, "charges", "list"),
     }),
 
     // ── Banking Links (Data Aggregation) ──
@@ -531,12 +433,12 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "List banking links (connections to users' bank accounts). Can filter by mode and institution.",
       schema: ListBankingLinksParameters,
       handler: async (args) => {
-        const query: Record<string, unknown> = {};
-        if (args.mode) query.mode = args.mode;
-        if (args.institution_id) query.institution_id = args.institution_id;
-        if (args.page) query.page = args.page;
-        if (args.per_page) query.per_page = args.per_page;
-        return callApi(token, "GET", "/internal/v1/dashboard/links", { query });
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        if (args.institution_id) flags.institution_id = args.institution_id;
+        if (args.page) flags.page = args.page;
+        if (args.per_page) flags.per_page = args.per_page;
+        return runCommand(token, "links", "list", flags);
       },
     }),
     createTool({
@@ -544,16 +446,20 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "Get a specific banking link by ID, including associated bank accounts.",
       schema: GetBankingLinkParameters,
       handler: async (args) => {
-        const query: Record<string, unknown> = {};
-        if (args.mode) query.mode = args.mode;
-        return callApi(token, "GET", `/internal/v1/dashboard/links/${encodeURIComponent(args.link_id)}`, { query });
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        return runCommand(token, "links", "show", flags, args.link_id);
       },
     }),
     createTool({
       name: "delete_banking_link",
-      description: "Delete a banking link. Requires MFA verification.",
+      description: "Delete a banking link.",
       schema: DeleteBankingLinkParameters,
-      handler: deleteBankingLinkMfa,
+      handler: async (args) => {
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        return runCommand(token, "links", "delete", flags, args.link_id);
+      },
     }),
 
     // ── Movements ──
@@ -562,10 +468,10 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "List bank movements (transactions) for a specific account.",
       schema: ListMovementsParameters,
       handler: async (args) => {
-        const query: Record<string, unknown> = {};
-        if (args.mode) query.mode = args.mode;
-        if (args.limit) query.limit = args.limit;
-        return callApi(token, "GET", `/internal/v2/dashboard/accounts/${encodeURIComponent(args.account_id)}/movements`, { query });
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        if (args.limit) flags.limit = args.limit;
+        return runCommand(token, "accounts", "movements", flags, args.account_id);
       },
     }),
 
@@ -574,30 +480,45 @@ export function buildTools(threadId: string, token: string): Tool[] {
       name: "list_team_members",
       description: "List team members of the organization.",
       schema: ListTeamMembersParameters,
-      handler: async () => callApi(token, "GET", "/internal/v1/dashboard/organization_users"),
+      handler: async () => runCommand(token, "organization-users", "list"),
     }),
     createTool({
       name: "invite_team_member",
-      description: "Invite a new team member to the organization. Requires MFA verification.",
+      description: "Invite a new team member to the organization.",
       schema: InviteTeamMemberParameters,
-      handler: inviteTeamMemberMfa,
+      handler: async (args) => {
+        const flags: Record<string, unknown> = {
+          name: args.name,
+          last_name: args.last_name,
+          email: args.email,
+          organization_role: args.organization_role,
+        };
+        if (args.dashboard_role_name) flags.dashboard_role_name = args.dashboard_role_name;
+        return runCommand(token, "organization-users", "create", flags);
+      },
     }),
     createTool({
       name: "update_team_member_role",
       description: "Update a team member's role and info.",
       schema: UpdateTeamMemberRoleParameters,
       handler: async (args) => {
-        const { member_id, ...body } = args;
-        return callApi(token, "PUT", `/internal/v1/dashboard/organization_users/${encodeURIComponent(member_id)}`, {
-          body: { user_data: body },
-        });
+        const flags: Record<string, unknown> = {
+          user_data: {
+            organization_role: args.organization_role,
+            ...(args.name && { name: args.name }),
+            ...(args.last_name && { last_name: args.last_name }),
+          },
+        };
+        return runCommand(token, "organization-users", "update", flags, args.member_id);
       },
     }),
     createTool({
       name: "disable_team_member",
-      description: "Remove a team member from the organization. Requires MFA verification.",
+      description: "Remove a team member from the organization.",
       schema: DisableTeamMemberParameters,
-      handler: disableTeamMemberMfa,
+      handler: async (args) => {
+        return runCommand(token, "organization-users", "delete", {}, args.member_id);
+      },
     }),
 
     // ── API Keys ──
@@ -606,9 +527,9 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "Get information about the organization's API keys (type, environment, prefix). Does NOT reveal full key values.",
       schema: GetApiKeysInfoParameters,
       handler: async (args) => {
-        const query: Record<string, unknown> = {};
-        if (args.mode) query.mode = args.mode;
-        return callApi(token, "GET", "/internal/v1/dashboard/api_keys", { query });
+        const flags: Record<string, unknown> = {};
+        if (args.mode) flags.mode = args.mode;
+        return runCommand(token, "api-keys", "list", flags);
       },
     }),
 
@@ -618,9 +539,9 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "List supported financial institutions. Can filter by country (CL, MX).",
       schema: ListInstitutionsParameters,
       handler: async (args) => {
-        const query: Record<string, unknown> = {};
-        if (args.country) query.country = args.country;
-        return callApi(token, "GET", "/internal/v1/dashboard/banks", { query });
+        const flags: Record<string, unknown> = {};
+        if (args.country) flags.country = args.country;
+        return runCommand(token, "banks", "list", flags);
       },
     }),
   ];
