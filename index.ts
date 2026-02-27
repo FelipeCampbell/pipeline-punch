@@ -1,18 +1,69 @@
 import { streamAgent } from "./openai";
+import { parseCommand } from "./src/parser.ts";
+import { dispatch } from "./src/dispatcher.ts";
+
+const PORT = Number(process.env.PORT) || 4000;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
+function withCors(response: Response): Response {
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    response.headers.set(key, value);
+  }
+  return response;
+}
+
 Bun.serve({
-  port: 8080,
+  port: PORT,
   routes: {
     "/cli": {
+      OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
       POST: async (req) => {
-        const body = await req.json();
-        return Response.json({ endpoint: "cli", data: body }, { headers: corsHeaders });
+        // Extract Bearer token from Authorization header
+        const authHeader = req.headers.get("Authorization");
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+          return withCors(
+            Response.json(
+              { error: "Missing or invalid Authorization header. Expected: Bearer <token>" },
+              { status: 401 }
+            )
+          );
+        }
+        const token = authHeader.slice(7);
+
+        // Parse the command from the request body
+        let command: string;
+        try {
+          const body = await req.json();
+          command = (body as { command: string }).command;
+        } catch {
+          return withCors(
+            Response.json(
+              { error: 'Invalid JSON body. Expected: { "command": "fintoc <resource> <action> [--flags]" }' },
+              { status: 400 }
+            )
+          );
+        }
+
+        if (!command || typeof command !== "string") {
+          return withCors(
+            Response.json(
+              { error: 'Missing "command" field. Expected: { "command": "fintoc <resource> <action> [--flags]" }' },
+              { status: 400 }
+            )
+          );
+        }
+
+        // Parse and dispatch the command
+        const parsed = parseCommand(command);
+        const result = await dispatch(parsed, token);
+
+        const status = result.status || (result.success ? 200 : 400);
+        return withCors(Response.json(result, { status }));
       },
     },
     "/chat": {
@@ -61,8 +112,8 @@ Bun.serve({
     if (req.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
-    return new Response("Not Found", { status: 404 });
+    return withCors(new Response("Not Found", { status: 404 }));
   },
 });
 
-console.log("Server running on http://localhost:8080");
+console.log(`Server running on http://localhost:${PORT}`);
