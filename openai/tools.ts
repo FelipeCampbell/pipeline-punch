@@ -28,13 +28,26 @@ export function createTool<T extends z.ZodType>(opts: {
 
 // ── Helper to dispatch a CLI command and return stringified result ──
 
+interface BuildToolsContext {
+  organizationId?: string;
+  mode?: "live" | "test";
+}
+
 async function runCommand(
   token: string,
   resource: string,
   action: string,
   flags: Record<string, unknown> = {},
-  id?: string
+  id?: string,
+  context?: BuildToolsContext
 ): Promise<string> {
+  // Inject org and mode defaults so the LLM doesn't need to specify them
+  if (context?.organizationId) {
+    flags.current_organization_id = context.organizationId;
+  }
+  if (context?.mode && !flags.mode) {
+    flags.mode = context.mode;
+  }
   const command: ParsedCommand = { resource, action, flags, id };
   const result = await dispatch(command, token);
   return JSON.stringify(result.data);
@@ -203,7 +216,7 @@ const ListInstitutionsParameters = z.object({
 // ── Build all tools (with thread-scoped MFA handlers) ──
 // ══════════════════════════════════════════════════════════════
 
-export function buildTools(threadId: string, token: string): Tool[] {
+export function buildTools(threadId: string, token: string, context: BuildToolsContext = {}): Tool[] {
   // ── MFA-aware handlers ──
 
   async function createTransferIntent(args: z.infer<typeof CreateTransferIntentParameters>): Promise<string> {
@@ -267,7 +280,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
         ...data,
         otp_code: otpCode,
       };
-      return runCommand(apiToken, "transfer-intents", "create", flags);
+      return runCommand(apiToken, "transfer-intents", "create", flags, undefined, context);
     }
 
     return JSON.stringify({ error: "Unknown action type" });
@@ -281,7 +294,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
     // ── Transfers ──
     createTool({
       name: "get_transfers",
-      description: "Get bank transfers. Can filter by status, mode, and paginate.",
+      description: "Get bank transfers. Can filter by status and paginate.",
       schema: GetTransfersParameters,
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
@@ -289,7 +302,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
         if (args.limit) flags.limit = args.limit;
         if (args.starting_after) flags.starting_after = args.starting_after;
         if (args.status) flags.status = args.status;
-        return runCommand(token, "transfers", "list", flags);
+        return runCommand(token, "transfers", "list", flags, undefined, context);
       },
     }),
     createTool({
@@ -299,7 +312,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
         if (args.mode) flags.mode = args.mode;
-        return runCommand(token, "transfers", "show", flags, args.transfer_id);
+        return runCommand(token, "transfers", "show", flags, args.transfer_id, context);
       },
     }),
     createTool({
@@ -331,7 +344,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
         if (args.mode) flags.mode = args.mode;
-        return runCommand(token, "webhook-endpoints", "list", flags);
+        return runCommand(token, "webhook-endpoints", "list", flags, undefined, context);
       },
     }),
     createTool({
@@ -344,7 +357,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
         flags.url = args.url;
         flags.enabled_events = args.enabled_events;
         if (args.mode) flags.mode = args.mode;
-        return runCommand(token, "webhook-endpoints", "create", flags);
+        return runCommand(token, "webhook-endpoints", "create", flags, undefined, context);
       },
     }),
     createTool({
@@ -358,7 +371,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
         if (args.enabled_events) flags.enabled_events = args.enabled_events;
         if (args.disabled !== undefined) flags.disabled = args.disabled;
         if (args.mode) flags.mode = args.mode;
-        return runCommand(token, "webhook-endpoints", "update", flags, args.webhook_id);
+        return runCommand(token, "webhook-endpoints", "update", flags, args.webhook_id, context);
       },
     }),
     createTool({
@@ -368,20 +381,20 @@ export function buildTools(threadId: string, token: string): Tool[] {
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
         if (args.mode) flags.mode = args.mode;
-        return runCommand(token, "webhook-endpoints", "delete", flags, args.webhook_id);
+        return runCommand(token, "webhook-endpoints", "delete", flags, args.webhook_id, context);
       },
     }),
 
     // ── Payments ──
     createTool({
       name: "list_payment_intents",
-      description: "List payment intents. Can filter by mode.",
+      description: "List payment intents.",
       schema: ListPaymentIntentsParameters,
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
         if (args.mode) flags.mode = args.mode;
         if (args.limit) flags.limit = args.limit;
-        return runCommand(token, "payments", "list", flags);
+        return runCommand(token, "payments", "list", flags, undefined, context);
       },
     }),
     createTool({
@@ -391,7 +404,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
         if (args.mode) flags.mode = args.mode;
-        return runCommand(token, "payments", "show", flags, args.payment_intent_id);
+        return runCommand(token, "payments", "show", flags, args.payment_intent_id, context);
       },
     }),
 
@@ -407,7 +420,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
         };
         if (args.amount) flags.amount = args.amount;
         if (args.mode) flags.mode = args.mode;
-        return runCommand(token, "refunds", "create", flags);
+        return runCommand(token, "refunds", "create", flags, undefined, context);
       },
     }),
 
@@ -416,7 +429,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       name: "list_subscriptions",
       description: "List subscriptions (direct debit / recurring payments).",
       schema: ListSubscriptionsParameters,
-      handler: async () => runCommand(token, "subscriptions", "list"),
+      handler: async () => runCommand(token, "subscriptions", "list", {}, undefined, context),
     }),
 
     // ── Charges ──
@@ -424,13 +437,13 @@ export function buildTools(threadId: string, token: string): Tool[] {
       name: "list_charges",
       description: "List charges (individual payments within subscriptions).",
       schema: ListChargesParameters,
-      handler: async () => runCommand(token, "charges", "list"),
+      handler: async () => runCommand(token, "charges", "list", {}, undefined, context),
     }),
 
     // ── Banking Links (Data Aggregation) ──
     createTool({
       name: "list_banking_links",
-      description: "List banking links (connections to users' bank accounts). Can filter by mode and institution.",
+      description: "List banking links (connections to users' bank accounts). Can filter by institution.",
       schema: ListBankingLinksParameters,
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
@@ -438,7 +451,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
         if (args.institution_id) flags.institution_id = args.institution_id;
         if (args.page) flags.page = args.page;
         if (args.per_page) flags.per_page = args.per_page;
-        return runCommand(token, "links", "list", flags);
+        return runCommand(token, "links", "list", flags, undefined, context);
       },
     }),
     createTool({
@@ -448,7 +461,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
         if (args.mode) flags.mode = args.mode;
-        return runCommand(token, "links", "show", flags, args.link_id);
+        return runCommand(token, "links", "show", flags, args.link_id, context);
       },
     }),
     createTool({
@@ -458,7 +471,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
         if (args.mode) flags.mode = args.mode;
-        return runCommand(token, "links", "delete", flags, args.link_id);
+        return runCommand(token, "links", "delete", flags, args.link_id, context);
       },
     }),
 
@@ -471,7 +484,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
         const flags: Record<string, unknown> = {};
         if (args.mode) flags.mode = args.mode;
         if (args.limit) flags.limit = args.limit;
-        return runCommand(token, "accounts", "movements", flags, args.account_id);
+        return runCommand(token, "accounts", "movements", flags, args.account_id, context);
       },
     }),
 
@@ -480,7 +493,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       name: "list_team_members",
       description: "List team members of the organization.",
       schema: ListTeamMembersParameters,
-      handler: async () => runCommand(token, "organization-users", "list"),
+      handler: async () => runCommand(token, "organization-users", "list", {}, undefined, context),
     }),
     createTool({
       name: "invite_team_member",
@@ -494,7 +507,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
           organization_role: args.organization_role,
         };
         if (args.dashboard_role_name) flags.dashboard_role_name = args.dashboard_role_name;
-        return runCommand(token, "organization-users", "create", flags);
+        return runCommand(token, "organization-users", "create", flags, undefined, context);
       },
     }),
     createTool({
@@ -509,7 +522,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
             ...(args.last_name && { last_name: args.last_name }),
           },
         };
-        return runCommand(token, "organization-users", "update", flags, args.member_id);
+        return runCommand(token, "organization-users", "update", flags, args.member_id, context);
       },
     }),
     createTool({
@@ -517,7 +530,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       description: "Remove a team member from the organization.",
       schema: DisableTeamMemberParameters,
       handler: async (args) => {
-        return runCommand(token, "organization-users", "delete", {}, args.member_id);
+        return runCommand(token, "organization-users", "delete", {}, args.member_id, context);
       },
     }),
 
@@ -529,7 +542,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
         if (args.mode) flags.mode = args.mode;
-        return runCommand(token, "api-keys", "list", flags);
+        return runCommand(token, "api-keys", "list", flags, undefined, context);
       },
     }),
 
@@ -541,7 +554,7 @@ export function buildTools(threadId: string, token: string): Tool[] {
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
         if (args.country) flags.country = args.country;
-        return runCommand(token, "banks", "list", flags);
+        return runCommand(token, "banks", "list", flags, undefined, context);
       },
     }),
   ];

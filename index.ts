@@ -81,7 +81,12 @@ Bun.serve({
         }
         const token = authHeader.slice(7);
 
-        const { message, threadId } = (await req.json()) as { message: string; threadId?: string };
+        const { message, threadId, organizationId, mode } = (await req.json()) as {
+          message: string;
+          threadId?: string;
+          organizationId?: string;
+          mode?: "live" | "test";
+        };
 
         if (!message || typeof message !== "string") {
           return Response.json(
@@ -102,7 +107,7 @@ Bun.serve({
               controller.enqueue(encoder.encode(`event: ${event}\ndata: ${encoded}\n\n`));
             };
 
-            streamAgent(message, { threadId, token }, (event) => {
+            streamAgent(message, { threadId, token, organizationId, mode }, (event) => {
               send(event.type, event.data);
             })
               .catch((err) => {

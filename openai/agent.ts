@@ -13,6 +13,8 @@ export interface AgentOptions {
   systemPrompt?: string;
   threadId?: string;
   token?: string;
+  organizationId?: string;
+  mode?: "live" | "test";
 }
 
 export interface StreamEvent {
@@ -140,17 +142,28 @@ export async function runAgent(
     systemPrompt = DEFAULT_SYSTEM_PROMPT,
     threadId,
     token = "",
+    organizationId,
+    mode = "live",
   } = options;
 
   const thread = getOrCreateThread(threadId);
-  const tools = buildTools(thread.id, token);
+  const tools = buildTools(thread.id, token, { organizationId, mode });
 
   // Append new user message to thread
   appendMessage(thread.id, { role: "user", content: input });
 
+  // Inject active org/mode context
+  const contextLines: string[] = [];
+  contextLines.push(`\n\n## Contexto de sesión activa`);
+  contextLines.push(`- **Modo activo**: ${mode} (usa siempre este modo en las herramientas, no le preguntes al usuario)`);
+  if (organizationId) {
+    contextLines.push(`- **Organization ID**: ${organizationId}`);
+  }
+  const fullSystemPrompt = systemPrompt + contextLines.join("\n");
+
   // Build messages: system + full thread history
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt },
+    { role: "system", content: fullSystemPrompt },
     ...thread.messages,
   ];
 
@@ -186,15 +199,26 @@ export function streamAgent(
     systemPrompt = DEFAULT_SYSTEM_PROMPT,
     threadId,
     token = "",
+    organizationId,
+    mode = "live",
   } = options;
 
   const thread = getOrCreateThread(threadId);
-  const tools = buildTools(thread.id, token);
+  const tools = buildTools(thread.id, token, { organizationId, mode });
 
   appendMessage(thread.id, { role: "user", content: input });
 
+  // Inject active org/mode context so the LLM never needs to ask
+  const contextLines: string[] = [];
+  contextLines.push(`\n\n## Contexto de sesión activa`);
+  contextLines.push(`- **Modo activo**: ${mode} (usa siempre este modo en las herramientas, no le preguntes al usuario)`);
+  if (organizationId) {
+    contextLines.push(`- **Organization ID**: ${organizationId}`);
+  }
+  const fullSystemPrompt = systemPrompt + contextLines.join("\n");
+
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt },
+    { role: "system", content: fullSystemPrompt },
     ...thread.messages,
   ];
 
