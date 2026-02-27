@@ -100,7 +100,7 @@ export async function runAgent(
   options: AgentOptions = {}
 ): Promise<{ reply: string; threadId: string }> {
   const {
-    model = "gpt-4.1-2025-04-14",
+    model = "gpt-5.2-2025-12-11",
     systemPrompt = DEFAULT_SYSTEM_PROMPT,
     threadId,
     token = "",
@@ -146,7 +146,7 @@ export function streamAgent(
   onEvent: (event: StreamEvent) => void
 ): Promise<void> {
   const {
-    model = "gpt-4.1-2025-04-14",
+    model = "gpt-5.2-2025-12-11",
     systemPrompt = DEFAULT_SYSTEM_PROMPT,
     threadId,
     token = "",
