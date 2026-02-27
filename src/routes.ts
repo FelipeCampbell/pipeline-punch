@@ -789,3 +789,101 @@ export function getAvailableCommands(): string[] {
     return `fintoc ${resource} ${action}${route.description ? ` — ${route.description}` : ""}`;
   });
 }
+
+export interface GroupedAction {
+  action: string;
+  command: string;
+  method: string;
+  description: string;
+}
+
+/**
+ * Get commands grouped by resource, with structured action info.
+ */
+export function getGroupedCommands(): Record<string, GroupedAction[]> {
+  const grouped: Record<string, GroupedAction[]> = {};
+
+  for (const [key, route] of Object.entries(routes)) {
+    const [resource, action] = key.split(".");
+    if (!resource || !action) continue;
+
+    if (!grouped[resource]) {
+      grouped[resource] = [];
+    }
+
+    grouped[resource].push({
+      action,
+      command: `fintoc ${resource} ${action}`,
+      method: route.method,
+      description: route.description || "",
+    });
+  }
+
+  return grouped;
+}
+
+/**
+ * Render a CLI-style help text for all commands, grouped by resource.
+ * Designed to be copy-paste friendly — reads like real CLI output.
+ */
+export function renderHelpText(): string {
+  const grouped = getGroupedCommands();
+  const lines: string[] = [];
+
+  // Find the longest action name for alignment
+  let maxActionLen = 0;
+  for (const actions of Object.values(grouped)) {
+    for (const a of actions) {
+      if (a.action.length > maxActionLen) maxActionLen = a.action.length;
+    }
+  }
+  const colWidth = maxActionLen + 6; // 4 indent + 2 gutter
+
+  lines.push("Fintoc CLI");
+  lines.push("");
+  lines.push("  Usage:  fintoc <resource> <action> [<id>] [--flag value ...]");
+  lines.push("");
+  lines.push("  Resources:");
+  lines.push("");
+
+  for (const [resource, actions] of Object.entries(grouped)) {
+    lines.push(`  ${resource}`);
+    for (const a of actions) {
+      const padded = `    ${a.action}`.padEnd(colWidth);
+      lines.push(`${padded}${a.description}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("  Tip: run \"fintoc <resource> help\" for details on a specific resource.");
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Render CLI-style help text for a single resource.
+ */
+export function renderResourceHelpText(resource: string, actions: GroupedAction[]): string {
+  const lines: string[] = [];
+
+  // Find the longest full command for alignment
+  let maxCmdLen = 0;
+  for (const a of actions) {
+    const len = `fintoc ${resource} ${a.action}`.length;
+    if (len > maxCmdLen) maxCmdLen = len;
+  }
+  const colWidth = maxCmdLen + 6; // 2 indent + 4 gutter
+
+  lines.push(`Fintoc CLI — ${resource}`);
+  lines.push("");
+
+  for (const a of actions) {
+    const cmd = `  fintoc ${resource} ${a.action}`;
+    const padded = cmd.padEnd(colWidth);
+    lines.push(`${padded}[${a.method}]  ${a.description}`);
+  }
+
+  lines.push("");
+  return lines.join("\n");
+}

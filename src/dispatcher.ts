@@ -4,7 +4,7 @@
  */
 
 import type { ParsedCommand } from "./parser.ts";
-import { routes, routeKey, getAvailableCommands } from "./routes.ts";
+import { routes, routeKey, getAvailableCommands, getGroupedCommands, renderHelpText, renderResourceHelpText } from "./routes.ts";
 import { apiRequest } from "./client.ts";
 import type { RouteDefinition } from "./routes.ts";
 
@@ -72,18 +72,41 @@ export async function dispatch(
   command: ParsedCommand,
   token: string
 ): Promise<DispatchResult> {
-  // Handle help command
+  // Handle help command (matches: "help", "help!", "", or any resource with action "help")
+  const normalizedResource = command.resource.replace(/[!?]+$/, "");
   if (
-    command.resource === "help" ||
-    command.resource === "" ||
+    normalizedResource === "help" ||
+    normalizedResource === "" ||
     command.action === "help"
   ) {
-    const commands = getAvailableCommands();
+    const grouped = getGroupedCommands();
+
+    // If asking for help on a specific resource (e.g. "fintoc transfers help")
+    if (normalizedResource !== "help" && normalizedResource !== "" && command.action === "help") {
+      const resourceCommands = grouped[normalizedResource];
+      if (resourceCommands) {
+        return {
+          success: true,
+          data: {
+            text: renderResourceHelpText(normalizedResource, resourceCommands),
+            resource: normalizedResource,
+            actions: resourceCommands,
+          },
+        };
+      }
+      return {
+        success: false,
+        error: `Unknown resource: "${normalizedResource}". Run "fintoc help" for all available commands.`,
+        data: { available_resources: Object.keys(grouped) },
+      };
+    }
+
     return {
       success: true,
       data: {
-        message: "Available commands:",
-        commands,
+        text: renderHelpText(),
+        usage: "fintoc <resource> <action> [<id>] [--flag value ...]",
+        resources: grouped,
       },
     };
   }
