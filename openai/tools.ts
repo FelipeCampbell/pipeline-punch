@@ -102,6 +102,7 @@ const CreateWebhookParameters = z.object({
   name: z.string().optional().describe("A friendly name for the webhook endpoint (e.g. 'Notificaciones de pagos'). Optional but recommended for identification."),
   url: z.string().describe("The HTTPS URL that will receive webhook event POST requests (e.g. 'https://myapp.com/webhooks/fintoc')."),
   enabled_events: z.array(z.string()).describe("List of Fintoc event types to subscribe to (e.g. ['payment_intent.succeeded', 'transfer.created']). Use '*' to subscribe to all events."),
+  mode: z.enum(["live", "test"]).optional().describe("Explicitly set the webhook mode. REQUIRED when promoting a webhook from test to live (set to 'live'). If omitted, uses the session's current mode."),
 });
 
 const UpdateWebhookParameters = z.object({
@@ -114,6 +115,15 @@ const UpdateWebhookParameters = z.object({
 
 const DeleteWebhookParameters = z.object({
   webhook_id: z.string().describe("The ID of the webhook endpoint to permanently delete (e.g. 'we_abc123'). This action cannot be undone."),
+});
+
+const GetAvailableWebhookEventsParameters = z.object({
+  category: z.string().optional().describe("Filter by category name to get only that category's events. Valid categories: 'pagos', 'transferencias', 'debito_directo', 'movimientos', 'facturacion', 'medios_de_pago'. Omit to get all categories with their events."),
+});
+
+const SendTestWebhookParameters = z.object({
+  webhook_id: z.string().describe("The ID of the webhook endpoint to send the test event to (e.g. 'we_abc123'). Obtain this from list_webhooks."),
+  event: z.string().describe("The event type to simulate (e.g. 'payment_intent.succeeded'). Must be an event the endpoint is subscribed to."),
 });
 
 // ── Payments ──
@@ -343,13 +353,14 @@ export function buildTools(threadId: string, token: string, context: BuildToolsC
     }),
     createTool({
       name: "create_webhook",
-      description: "Create a new webhook endpoint to receive event notifications via HTTP POST. Requires a URL and a list of event types to subscribe to. The environment mode (live/test) is automatically set from the user's session.",
+      description: "Create a new webhook endpoint to receive event notifications via HTTP POST. Requires a URL and a list of event types to subscribe to. The mode defaults to the session's current mode, but can be explicitly overridden (e.g. set to 'live' when promoting a test webhook to production).",
       schema: CreateWebhookParameters,
       handler: async (args) => {
         const flags: Record<string, unknown> = {};
         if (args.name) flags.name = args.name;
         flags.url = args.url;
         flags.enabled_events = args.enabled_events;
+        if (args.mode) flags.mode = args.mode;
         return runCommand(token, "webhook-endpoints", "create", flags, undefined, context);
       },
     }),
@@ -372,6 +383,106 @@ export function buildTools(threadId: string, token: string, context: BuildToolsC
       schema: DeleteWebhookParameters,
       handler: async (args) => {
         return runCommand(token, "webhook-endpoints", "delete", {}, args.webhook_id, context);
+      },
+    }),
+    createTool({
+      name: "get_available_webhook_events",
+      description: "Get the catalog of available Fintoc webhook event types, grouped by product category. Use this BEFORE creating a webhook to show the user what events they can subscribe to. Can return all categories or filter by a specific one. Does NOT call the API — returns a static catalog.",
+      schema: GetAvailableWebhookEventsParameters,
+      handler: async (args) => {
+        const catalog: Record<string, { description: string; events: { id: string; name: string }[] }> = {
+          pagos: {
+            description: "Intenciones de pago, checkout sessions, reembolsos y payouts",
+            events: [
+              { id: "payment_intent.succeeded", name: "Pago exitoso" },
+              { id: "payment_intent.failed", name: "Pago fallido" },
+              { id: "payment_intent.rejected", name: "Pago rechazado por el banco" },
+              { id: "payment_intent.pending", name: "Pago pendiente de confirmación" },
+              { id: "payment_intent.expired", name: "Pago expirado" },
+              { id: "checkout_session.finished", name: "Sesión de checkout completada" },
+              { id: "checkout_session.expired", name: "Sesión de checkout expirada" },
+              { id: "refund.succeeded", name: "Reembolso exitoso" },
+              { id: "refund.failed", name: "Reembolso fallido" },
+              { id: "refund.in_progress", name: "Reembolso en proceso" },
+              { id: "payout.created", name: "Payout creado" },
+              { id: "payout.canceled", name: "Payout cancelado" },
+              { id: "payout.succeeded", name: "Payout exitoso" },
+              { id: "payout.returned", name: "Payout devuelto" },
+            ],
+          },
+          transferencias: {
+            description: "Transferencias entrantes/salientes y verificación de cuentas",
+            events: [
+              { id: "transfer.inbound.succeeded", name: "Transferencia entrante recibida" },
+              { id: "transfer.inbound.rejected", name: "Transferencia entrante rechazada" },
+              { id: "transfer.inbound.returned", name: "Transferencia entrante devuelta" },
+              { id: "transfer.inbound.return_failed", name: "Devolución de transferencia entrante fallida" },
+              { id: "transfer.outbound.succeeded", name: "Transferencia saliente exitosa" },
+              { id: "transfer.outbound.failed", name: "Transferencia saliente fallida" },
+              { id: "transfer.outbound.returned", name: "Transferencia saliente devuelta" },
+              { id: "account_verification.succeeded", name: "Verificación de cuenta exitosa" },
+              { id: "account_verification.failed", name: "Verificación de cuenta fallida" },
+            ],
+          },
+          debito_directo: {
+            description: "Suscripciones (PAC) y cobros recurrentes",
+            events: [
+              { id: "subscription.activated", name: "Suscripción activada (mandato PAC firmado)" },
+              { id: "subscription.canceled", name: "Suscripción cancelada" },
+              { id: "subscription_intent.succeeded", name: "Intención de suscripción exitosa" },
+              { id: "subscription_intent.rejected", name: "Intención de suscripción rechazada" },
+              { id: "subscription_intent.failed", name: "Intención de suscripción fallida" },
+              { id: "charge.succeeded", name: "Cobro exitoso" },
+              { id: "charge.failed", name: "Cobro fallido" },
+            ],
+          },
+          movimientos: {
+            description: "Refresh de cuentas, estado de links y credenciales",
+            events: [
+              { id: "link.credentials_changed", name: "Credenciales del link inválidas" },
+              { id: "link.refresh_intent.succeeded", name: "Link refrescado exitosamente" },
+              { id: "link.refresh_intent.failed", name: "Refresco de link fallido" },
+              { id: "account.refresh_intent.succeeded", name: "Cuenta refrescada" },
+              { id: "account.refresh_intent.failed", name: "Refresco de cuenta fallido" },
+              { id: "account.refresh_intent.rejected", name: "Refresco de cuenta rechazado" },
+              { id: "account.refresh_intent.movements_removed", name: "Movimientos revertidos" },
+              { id: "account.refresh_intent.movements_modified", name: "Movimientos modificados" },
+            ],
+          },
+          facturacion: {
+            description: "Estado de pago de facturas",
+            events: [
+              { id: "invoice.payment_succeeded", name: "Pago de factura exitoso" },
+              { id: "invoice.payment_failed", name: "Pago de factura fallido" },
+            ],
+          },
+          medios_de_pago: {
+            description: "Activación y cancelación de medios de pago",
+            events: [
+              { id: "payment_method.activated", name: "Medio de pago activado" },
+              { id: "payment_method.canceled", name: "Medio de pago cancelado" },
+            ],
+          },
+        };
+        if (args.category) {
+          const key = args.category.toLowerCase();
+          const cat = catalog[key];
+          if (!cat) return JSON.stringify({ error: `Categoría '${args.category}' no encontrada. Categorías válidas: ${Object.keys(catalog).join(", ")}` });
+          return JSON.stringify({ [key]: cat });
+        }
+        return JSON.stringify(catalog);
+      },
+    }),
+    createTool({
+      name: "send_test_webhook",
+      description: "Send a fake/test webhook event to an existing webhook endpoint. Only works in test mode. The endpoint must be subscribed to the event type. Use this to help the user verify their webhook integration is receiving events correctly.",
+      schema: SendTestWebhookParameters,
+      handler: async (args) => {
+        const flags: Record<string, unknown> = {
+          event: args.event,
+          mode: "test",
+        };
+        return runCommand(token, "webhook-endpoints", "test", flags, args.webhook_id, context);
       },
     }),
 
