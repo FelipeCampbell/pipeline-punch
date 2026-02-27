@@ -1,4 +1,4 @@
-export { runAgent, type AgentOptions } from "./agent";
+export { runAgent, streamAgent, type AgentOptions, type StreamEvent } from "./agent";
 export { createTool, buildTools, defaultTools, type Tool } from "./tools";
 export {
   getOrCreateThread,

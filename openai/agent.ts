@@ -14,6 +14,11 @@ export interface AgentOptions {
   threadId?: string;
 }
 
+export interface StreamEvent {
+  type: "text_delta" | "tool_call" | "tool_result" | "done" | "error";
+  data: string;
+}
+
 const DEFAULT_SYSTEM_PROMPT = `Eres el asistente virtual del dashboard de Fintoc. Tu nombre es Fintoc Assistant.
 Tu rol es ayudar a los usuarios del dashboard a gestionar y consultar sus operaciones financieras usando las herramientas disponibles.
 
@@ -132,4 +137,64 @@ export async function runAgent(
   appendMessage(thread.id, { role: "assistant", content: finalContent });
 
   return { reply: finalContent, threadId: thread.id };
+}
+
+export function streamAgent(
+  input: string,
+  options: AgentOptions = {},
+  onEvent: (event: StreamEvent) => void
+): Promise<void> {
+  const {
+    model = "gpt-4.1-2025-04-14",
+    systemPrompt = DEFAULT_SYSTEM_PROMPT,
+    threadId,
+  } = options;
+
+  const thread = getOrCreateThread(threadId);
+  const tools = buildTools(thread.id);
+
+  appendMessage(thread.id, { role: "user", content: input });
+
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: systemPrompt },
+    ...thread.messages,
+  ];
+
+  const runner = client.chat.completions.runTools({
+    model,
+    messages,
+    tools,
+    stream: true,
+  });
+
+  let fullContent = "";
+
+  runner.on("functionToolCall", (call) => {
+    console.log(`[tool] ${call.name}(${call.arguments})`);
+    onEvent({ type: "tool_call", data: JSON.stringify({ name: call.name }) });
+  });
+
+  runner.on("functionToolCallResult", (result) => {
+    console.log(`[tool result] ${result}`);
+    onEvent({ type: "tool_result", data: JSON.stringify({ result: result.substring(0, 200) }) });
+  });
+
+  runner.on("content", (delta) => {
+    fullContent += delta;
+    onEvent({ type: "text_delta", data: delta });
+  });
+
+  return new Promise<void>((resolve, reject) => {
+    runner.on("end", () => {
+      const finalContent = fullContent || "No response from agent.";
+      appendMessage(thread.id, { role: "assistant", content: finalContent });
+      onEvent({ type: "done", data: JSON.stringify({ threadId: thread.id }) });
+      resolve();
+    });
+
+    runner.on("error", (err) => {
+      onEvent({ type: "error", data: JSON.stringify({ message: String(err) }) });
+      reject(err);
+    });
+  });
 }
