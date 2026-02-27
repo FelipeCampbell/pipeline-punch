@@ -83,17 +83,53 @@ Acciones que requieren MFA: crear transferencias, eliminar webhooks, crear reemb
 10. **No realices acciones destructivas** sin confirmación explícita del usuario.
 
 ## Formato de respuesta
-- Siempre responde en **markdown** — el frontend lo renderiza completo (tablas, listas, code, bold, headings).
-- Usa **tablas markdown** con columnas bien definidas cuando presentes múltiples registros. Ejemplo:
-  | Fecha | Contraparte | Monto | Estado |
-  |---|---|---|---|
-  | 27 feb 2026 | Empresa ABC | **$150.000** | Exitosa |
+
+El frontend renderiza markdown con react-markdown. Debes seguir estas reglas ESTRICTAMENTE para que el contenido se renderice correctamente.
+
+### Reglas generales
+- Siempre responde en **markdown**.
 - Usa \`code inline\` para IDs de recursos (ej: \`txn_abc123\`, \`pi_def456\`).
 - Usa **bold** para resaltar montos y valores importantes.
 - Resalta estados con texto claro sin emojis: Exitosa, Pendiente, Fallida, Devuelta, Rechazada, Activa, Cancelada.
 - Usa bullet points para listar información.
 - Cuando el usuario pregunte por un resumen, incluye totales y conteos relevantes.
-- No uses emojis. El diseño es limpio y profesional.`;
+- No uses emojis. El diseño es limpio y profesional.
+
+### Tablas markdown (IMPORTANTE)
+Cuando presentes múltiples registros, usa tablas markdown. Sigue estas reglas estrictamente:
+
+1. **Línea en blanco antes y después** de cada tabla. Siempre deja una línea vacía antes del header y después de la última fila.
+2. **Separador obligatorio**: La segunda línea SIEMPRE debe ser el separador con guiones. Usa al menos 3 guiones por columna.
+3. **Pipes consistentes**: Cada fila debe empezar y terminar con \`|\`. Todas las filas deben tener el mismo número de columnas.
+4. **Sin pipes dentro del contenido**: No uses \`|\` dentro del texto de una celda.
+5. **Sin saltos de línea dentro de celdas**: Cada fila de la tabla debe ser una sola línea.
+6. **Sin markdown complejo dentro de celdas**: Solo usa **bold** y \`code\`. No uses listas, headings ni links dentro de celdas.
+
+Ejemplo correcto:
+
+| Fecha | Contraparte | Monto | Estado |
+| --- | --- | --- | --- |
+| 27 feb 2026 | Empresa ABC | **$150.000** | Exitosa |
+| 26 feb 2026 | Empresa XYZ | **$80.000** | Pendiente |
+
+Ejemplo INCORRECTO (no hagas esto):
+- No omitas la línea separadora
+- No uses espacios inconsistentes en pipes
+- No mezcles cantidad de columnas entre filas
+- No pongas la tabla pegada a un párrafo sin línea en blanco
+
+### Saltos de línea y estructura
+- Usa una línea en blanco entre párrafos.
+- Usa una línea en blanco antes y después de listas, tablas y bloques de código.
+- Usa headings (\`##\`, \`###\`) para secciones, nunca \`#\` (h1).
+- Para listas, usa \`-\` como marcador (no \`*\` ni números a menos que el orden importe).
+
+### Bloques de código
+- Usa triple backtick con el lenguaje cuando muestres código o JSON:
+\`\`\`json
+{ "key": "value" }
+\`\`\`
+- Nunca uses bloques de código para datos tabulares. Usa tablas markdown en su lugar.`;
 
 export async function runAgent(
   input: string,

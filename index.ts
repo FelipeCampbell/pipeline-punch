@@ -94,8 +94,11 @@ Bun.serve({
         const stream = new ReadableStream({
           start(controller) {
             const send = (event: string, data: string) => {
-              // JSON-encode data so newlines in markdown don't break SSE framing
-              const encoded = JSON.stringify(data);
+              // JSON-encode data so newlines in markdown don't break SSE framing.
+              // text_delta data is raw text, so we JSON-encode it.
+              // tool_call, tool_result, done, error are already JSON strings,
+              // so we send them as-is (they're valid single-line JSON).
+              const encoded = event === "text_delta" ? JSON.stringify(data) : data;
               controller.enqueue(encoder.encode(`event: ${event}\ndata: ${encoded}\n\n`));
             };
 
