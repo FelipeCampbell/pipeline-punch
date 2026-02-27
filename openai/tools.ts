@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import type { RunnableToolFunctionWithParse } from "openai/lib/RunnableFunction";
 import { setPendingAction, getPendingAction } from "./threads";
 import { dispatch } from "../src/dispatcher";
+import { resolveRoute, getAllRoutes } from "./navigation";
 import type { ParsedCommand } from "../src/parser";
 
 // ── Tool factory ──
@@ -28,10 +29,12 @@ export function createTool<T extends z.ZodType>(opts: {
 
 // ── Helper to dispatch a CLI command and return stringified result ──
 
-interface BuildToolsContext {
+export interface BuildToolsContext {
   organizationId?: string;
   mode?: "live" | "test";
 }
+
+export type OnNavigateCallback = (path: string, name: string) => void;
 
 async function runCommand(
   token: string,
@@ -203,11 +206,17 @@ const ListInstitutionsParameters = z.object({
   country: z.enum(["CL", "MX"]).optional().describe("Filter institutions by country code: 'CL' for Chile, 'MX' for Mexico. Omit to return institutions from all countries."),
 });
 
+// ── Navigation ──
+
+const NavigateToPageParameters = z.object({
+  destination: z.string().describe("Natural language description of where the user wants to navigate in the dashboard (e.g. 'configuración', 'transferencias', 'webhooks', 'api keys')."),
+});
+
 // ══════════════════════════════════════════════════════════════
 // ── Build all tools (with thread-scoped MFA handlers) ──
 // ══════════════════════════════════════════════════════════════
 
-export function buildTools(threadId: string, token: string, context: BuildToolsContext = {}): Tool[] {
+export function buildTools(threadId: string, token: string, context: BuildToolsContext = {}, onNavigate?: OnNavigateCallback): Tool[] {
   // ── MFA-aware handlers ──
 
   async function createTransferIntent(args: z.infer<typeof CreateTransferIntentParameters>): Promise<string> {
@@ -542,6 +551,21 @@ export function buildTools(threadId: string, token: string, context: BuildToolsC
         const flags: Record<string, unknown> = {};
         if (args.country) flags.country = args.country;
         return runCommand(token, "banks", "list", flags, undefined, context);
+      },
+    }),
+
+    // ── Navigation ──
+    createTool({
+      name: "navigate_to_page",
+      description: "Navigate the user to a specific section of the Fintoc dashboard. Use this when the user asks to go to a page (e.g. 'llévame a configuración', 'quiero ver mis transferencias', 'ir a webhooks'). The destination should be a natural language description of where they want to go.",
+      schema: NavigateToPageParameters,
+      handler: async (args) => {
+        const route = resolveRoute(args.destination);
+        if (route) {
+          onNavigate?.(route.path, route.name);
+          return JSON.stringify({ navigated: true, path: route.path, name: route.name });
+        }
+        return JSON.stringify({ navigated: false, available_pages: getAllRoutes() });
       },
     }),
   ];

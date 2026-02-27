@@ -25,7 +25,7 @@ export interface AgentOptions {
 }
 
 export interface StreamEvent {
-  type: "text_delta" | "tool_call" | "tool_result" | "done" | "error";
+  type: "text_delta" | "tool_call" | "tool_result" | "navigation" | "done" | "error";
   data: string;
 }
 
@@ -72,6 +72,12 @@ Tienes acceso a herramientas que te permiten consultar y gestionar recursos del 
 
 ### Instituciones
 - Listar instituciones financieras soportadas, filtrar por país
+
+### Navegación en el dashboard
+- Tienes la herramienta \`navigate_to_page\` para llevar al usuario a diferentes secciones del dashboard.
+- Cuando el usuario pida ir a algún lugar, usa la herramienta.
+- Si la navegación es exitosa, responde brevemente confirmando a dónde lo llevas y dile que estarás disponible cuando quiera volver.
+- Si no se encuentra la página, muestra las opciones disponibles.
 
 ## Flujo MFA
 Cuando una herramienta retorne un status \`mfa_required\`:
@@ -247,6 +253,10 @@ export async function runAgent(
   return { reply: finalContent, threadId: thread.id };
 }
 
+export interface StreamAgentResult {
+  navigation?: { path: string; name: string };
+}
+
 export function streamAgent(
   input: string,
   options: AgentOptions = {},
@@ -264,7 +274,12 @@ export function streamAgent(
   const organizationId = context.organization?.id;
 
   const thread = getOrCreateThread(threadId);
-  const tools = buildTools(thread.id, token, { organizationId, mode });
+
+  const onNavigate = (path: string, name: string) => {
+    onEvent({ type: "navigation", data: JSON.stringify({ path, name }) });
+  };
+
+  const tools = buildTools(thread.id, token, { organizationId, mode }, onNavigate);
 
   appendMessage(thread.id, { role: "user", content: input });
 
