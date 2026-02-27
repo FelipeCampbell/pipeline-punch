@@ -847,21 +847,30 @@ export function renderHelpText(): string {
     resourceLines.push(currentLine);
   }
 
+  const BOLD = "\x1b[1m";
+  const DIM = "\x1b[2m";
+  const CYAN = "\x1b[36m";
+  const YELLOW = "\x1b[33m";
+  const GREEN = "\x1b[32m";
+  const R = "\x1b[0m";
+
   return [
-    "Fintoc CLI",
+    `${BOLD}Fintoc CLI${R}`,
     "",
-    "  Usage:  fintoc <resource> <action> [<id>] [--flag value ...]",
+    `  ${DIM}Usage:${R}  fintoc ${CYAN}<resource>${R} ${CYAN}<action>${R} [<id>] [--flag value ...]`,
     "",
-    "  Resources:",
-    ...resourceLines,
+    `  ${DIM}Resources:${R}`,
+    ...resourceLines.map((line) =>
+      line.replace(/\b(\w[\w-]*)\b/g, `${YELLOW}$1${R}`)
+    ),
     "",
-    "  Examples:",
-    "    fintoc transfers list --mode live --limit 10",
-    "    fintoc transfers show tra_123 --mode live",
-    "    fintoc recipients create --holder_name \"John\" --account_number 123456",
-    "    fintoc webhook-endpoints list --mode test",
+    `  ${DIM}Examples:${R}`,
+    `    ${GREEN}fintoc transfers list --mode live --limit 10${R}`,
+    `    ${GREEN}fintoc transfers show tra_123 --mode live${R}`,
+    `    ${GREEN}fintoc recipients create --holder_name "John" --account_number 123456${R}`,
+    `    ${GREEN}fintoc webhook-endpoints list --mode test${R}`,
     "",
-    "  Run \"fintoc <resource> help\" to see all actions for a resource.",
+    `  ${DIM}Run "fintoc <resource> help" to see all actions for a resource.${R}`,
     "",
   ].join("\n");
 }
@@ -880,13 +889,20 @@ export function renderResourceHelpText(resource: string, actions: GroupedAction[
   }
   const colWidth = maxCmdLen + 6; // 2 indent + 4 gutter
 
-  lines.push(`Fintoc CLI — ${resource}`);
+  const BOLD = "\x1b[1m";
+  const DIM = "\x1b[2m";
+  const CYAN = "\x1b[36m";
+  const YELLOW = "\x1b[33m";
+  const R = "\x1b[0m";
+
+  lines.push(`${BOLD}Fintoc CLI${R} — ${CYAN}${resource}${R}`);
   lines.push("");
 
   for (const a of actions) {
-    const cmd = `  fintoc ${resource} ${a.action}`;
-    const padded = cmd.padEnd(colWidth);
-    lines.push(`${padded}[${a.method}]  ${a.description}`);
+    const cmd = `  ${CYAN}fintoc ${resource} ${a.action}${R}`;
+    const rawLen = `  fintoc ${resource} ${a.action}`.length;
+    const padding = " ".repeat(Math.max(colWidth - rawLen, 2));
+    lines.push(`${cmd}${padding}${YELLOW}[${a.method}]${R}  ${DIM}${a.description}${R}`);
   }
 
   lines.push("");
