@@ -69,6 +69,18 @@ Bun.serve({
     "/chat": {
       OPTIONS: () => new Response(null, { status: 204, headers: corsHeaders }),
       POST: async (req) => {
+        // Extract Bearer token from Authorization header (same as /cli)
+        const authHeader = req.headers.get("Authorization");
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+          return withCors(
+            Response.json(
+              { error: "Missing or invalid Authorization header. Expected: Bearer <token>" },
+              { status: 401 }
+            )
+          );
+        }
+        const token = authHeader.slice(7);
+
         const { message, threadId } = (await req.json()) as { message: string; threadId?: string };
 
         if (!message || typeof message !== "string") {
@@ -87,7 +99,7 @@ Bun.serve({
               controller.enqueue(encoder.encode(`event: ${event}\ndata: ${encoded}\n\n`));
             };
 
-            streamAgent(message, { threadId }, (event) => {
+            streamAgent(message, { threadId, token }, (event) => {
               send(event.type, event.data);
             })
               .catch((err) => {
