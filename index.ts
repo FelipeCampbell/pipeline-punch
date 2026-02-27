@@ -187,11 +187,16 @@ Bun.serve({
         }
         const token = authHeader.slice(7);
 
-        const { message, threadId, organizationId, mode } = (await req.json()) as {
+        const { message, threadId, context } = (await req.json()) as {
           message: string;
           threadId?: string;
-          organizationId?: string;
-          mode?: "live" | "test";
+          context?: {
+            mode?: "live" | "test";
+            currentPage?: string;
+            pageName?: string | null;
+            user?: { email?: string; name?: string; role?: string };
+            organization?: { id?: string; name?: string; country?: string };
+          };
         };
 
         if (!message || typeof message !== "string") {
@@ -213,7 +218,7 @@ Bun.serve({
               controller.enqueue(encoder.encode(`event: ${event}\ndata: ${encoded}\n\n`));
             };
 
-            streamAgent(message, { threadId, token, organizationId, mode }, (event) => {
+            streamAgent(message, { threadId, token, context }, (event) => {
               send(event.type, event.data);
             })
               .catch((err) => {
