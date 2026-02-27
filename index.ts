@@ -82,7 +82,9 @@ Bun.serve({
         const stream = new ReadableStream({
           start(controller) {
             const send = (event: string, data: string) => {
-              controller.enqueue(encoder.encode(`event: ${event}\ndata: ${data}\n\n`));
+              // JSON-encode data so newlines in markdown don't break SSE framing
+              const encoded = JSON.stringify(data);
+              controller.enqueue(encoder.encode(`event: ${event}\ndata: ${encoded}\n\n`));
             };
 
             streamAgent(message, { threadId }, (event) => {

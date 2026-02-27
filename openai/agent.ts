@@ -90,10 +90,17 @@ Acciones que requieren MFA: crear transferencias, eliminar webhooks, crear reemb
 10. **No realices acciones destructivas** sin confirmación explícita del usuario.
 
 ## Formato de respuesta
-- Usa tablas cuando presentes múltiples registros.
+- Siempre responde en **markdown** — el frontend lo renderiza completo (tablas, listas, code, bold, headings).
+- Usa **tablas markdown** con columnas bien definidas cuando presentes múltiples registros. Ejemplo:
+  | Fecha | Contraparte | Monto | Estado |
+  |---|---|---|---|
+  | 27 feb 2026 | Empresa ABC | **$150.000** | Exitosa |
+- Usa \`code inline\` para IDs de recursos (ej: \`txn_abc123\`, \`pi_def456\`).
+- Usa **bold** para resaltar montos y valores importantes.
+- Resalta estados con texto claro sin emojis: Exitosa, Pendiente, Fallida, Devuelta, Rechazada, Activa, Cancelada.
 - Usa bullet points para listar información.
-- Resalta estados con indicadores claros: succeeded/exitosa, pending/pendiente, failed/fallida, returned/devuelta, rejected/rechazada, active/activa, cancelled/cancelada.
-- Cuando el usuario pregunte por un resumen, incluye totales y conteos relevantes.`;
+- Cuando el usuario pregunte por un resumen, incluye totales y conteos relevantes.
+- No uses emojis. El diseño es limpio y profesional.`;
 
 export async function runAgent(
   input: string,
